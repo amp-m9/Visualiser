@@ -18,17 +18,18 @@ public class Main extends PApplet {
     static int base = 70;
     static int WIDTH = 700, HEIGHT = 700;
     static int cols = 16;
-    static int rows = 16;
-    float theta = 0;
-    int r = 0, g = 0, b = 0;
+    static int rows = 17;
+    static int offset = 128;
     int x_offset = -250;//-WIDTH * 2 / 5;
     int y_offset = 490;//580; // 295;
     int z_offset = -290;//500;//-140;
+    static double n = 0.0173;
     float weight = 0.8f; // 2.4f;
     float rot_factor = -1.51f;//.59
-    static double[][] z_vals = new double[rows][cols];
+    static double[][] z_vals = new double[rows + 1][cols];
+    static File fileIn = new File("src/09. Visitor.wav");
     long nanoTimeBetweenFFTs;
-//    String[] fileList;
+    String[] fileList;
     private File song;
     // FFTStream used to compute FFT frames
     private static FFTStream fftStream;
@@ -43,14 +44,15 @@ public class Main extends PApplet {
     ;
     static State state = State.STOP;
 
-    ScheduledExecutorService executorService = Executors.newSingleThreadScheduledExecutor();
+    static ScheduledExecutorService executorService = Executors.newSingleThreadScheduledExecutor();
 
     public void keyPressed() {
         if (key == '=') {
-            weight += .1f;
+            n += .00002;
         } else if (key == '-') {
-            weight -= .1f;
+            n -= .00002;
         }
+        if (key == '=' || key == '-') System.out.println("Constant n = " + n);
         if (key == 'k') {
             x_offset += 15;
         } else if (key == 'K') {
@@ -83,8 +85,13 @@ public class Main extends PApplet {
         }
         if (key == ' ') {
             if (state == State.STOP) {
-                startMusic();
+                startMusic(0);
                 state = state.PLAY;
+            }
+            if (state == State.PLAY) {
+                for (int i = 0; i < rows; i++) {
+                    System.out.println(Arrays.toString(z_vals[i]));
+                }
             }
 //            else if (state == State.PLAY) pauseMusic();
 //            else if (state == State.PAUSE) resumeMusic();
@@ -94,12 +101,13 @@ public class Main extends PApplet {
     }
 
 
-    public void startMusic() {
+    public void startMusic(int index) {
         isSynced = false;
-        song = new File("src/music/penguinmusic-modern-chillout-12641.wav");
+        song = new File("src/music/" + fileList[index]);
+        System.out.println(song.getAbsolutePath());
         QuiFFT quiFFT = null;
         try {
-            quiFFT = new QuiFFT(song).windowSize(rows * cols * 2).windowOverlap(0.75);
+            quiFFT = new QuiFFT(song).windowSize((rows - 1) * cols * 2).windowOverlap(0.75);
         } catch (IOException | UnsupportedAudioFileException e) {
             e.printStackTrace();
         }
@@ -137,8 +145,9 @@ public class Main extends PApplet {
                 long delay = 0;
                 if (nextFrame.frameEndMs > audioClip.getMicrosecondPosition() - audioClip.getFrameLength()) {
                     delay = (long) (nextFrame.frameEndMs - audioClip.getMicrosecondPosition()) * -1;
-//                    delay -= (long) (nextFrame.frameEndMs - nextFrame.frameStartMs) * .001;
+                    delay += (long) (nextFrame.frameEndMs - nextFrame.frameStartMs) * -1 * .01;
                     System.out.println("LAGGING");
+                    System.out.println("DELAY: " + delay);
                 }
                 executorService = Executors.newSingleThreadScheduledExecutor();
                 executorService.scheduleAtFixedRate(Main::updateHeightMap, delay, nanoTimeBetweenFFTs, TimeUnit.NANOSECONDS);
@@ -149,6 +158,17 @@ public class Main extends PApplet {
 
     public void settings() {
         size(WIDTH, HEIGHT, P3D);
+        // build list of files;
+        File musicDir = new File("src/music");
+        fileList = musicDir.list(new FilenameFilter() {
+            @Override
+            public boolean accept(File dir, String name) {
+                return name.toLowerCase().endsWith(".wav");
+            }
+        });
+        System.out.println(fileList.length);
+        System.out.println(Arrays.toString(z_vals));
+
     }
 
     public static double easeInCirc(double prog) {
@@ -177,40 +197,57 @@ public class Main extends PApplet {
         return x * x * x * x;
     }
 
+    public static double uniqueCurve(double amp) {
+        return Math.pow(amp, amp * n) - 1;
+    }
+
     public static void updateHeightMap() {
-        FrequencyBin[] bins = nextFrame.bins;
-        int j = 0;
-        for (int i = 0; i < bins.length; ++i) {
-            if (j >= 256) {
-                j += 1;
-                j = j % 16;
+        if (state == State.STOP){
+            for (int i = 0; i < rows; i++) {
+                for (int j = 0; j < cols; j++) {
+                    z_vals[i][j] = (z_vals[i][j] > 0) ? z_vals[i][j] - 0.25 : 0;
+                }
             }
 
-
-            int row = floor(j / rows) % 16;
-            int col = j % 16;
-            double newVal = (bins[i].amplitude + 80);
-//            System.out.println(newVal);
-            newVal = easeInQuart(newVal) * 150;
-            double oldVal = z_vals[row][col];
-            if (newVal < oldVal) z_vals[row][col] = oldVal - 0.55;
-            else if (i % 6 == 0) {
-                z_vals[row][col] = newVal;
-            } else if (i % 5 == 0) {
-                z_vals[row][col] = newVal * .4;
-            } else if (i % 4 == 0) {
-                z_vals[row][col] = newVal * .6;
-            } else if (i % 2 == 0) {
-                z_vals[row][col] = newVal * .8;
-            } else z_vals[row][col] = newVal * .3;
-
-            j += 2;
         }
+        else {
+            FrequencyBin[] bins = nextFrame.bins;
+            int j = offset;
+            for (int i = 0; i < bins.length; ++i) {
+                if (j >= 256 + offset) {
+                    j = 1 + offset;
+                }
 
-        if (fftStream.hasNext()) {
-            nextFrame = fftStream.next();
-        } else { // otherwise song has ended, so end program
-            System.exit(0);
+
+                int row = floor(j / (rows)) % 17 + 1;
+                int col = j % 16;
+                double newVal = (bins[i].amplitude + 80);
+                double oldVal = z_vals[row][col];
+                if (i % 8 == 0) newVal = 0;
+                else {
+                    newVal = uniqueCurve(newVal);
+                    if (i % 6 == 0) {
+
+                    } else if (i % 5 == 0) {
+                        newVal *= .8;
+                    } else if (i % 4 == 0) {
+                        newVal *= .6;
+                    } else if (i % 2 == 0) {
+                        newVal *= .5;
+                    } else newVal *= .4;
+                }
+                if (newVal < oldVal) z_vals[row][col] = (oldVal > 0) ? oldVal - 0.25 : 0;
+                else if (newVal < 4) z_vals[row][col] = 0;
+                else z_vals[row][col] = newVal;
+
+                j += 2;
+            }
+
+            if (fftStream.hasNext()) {
+                nextFrame = fftStream.next();
+            } else { // otherwise song has ended, so end program
+                state = State.STOP;
+            }
         }
     }
 
@@ -257,6 +294,14 @@ public class Main extends PApplet {
                 endShape();
             }
         }
+//        if (state == State.STOP) {
+//            try {
+//                executorService.shutdown();
+//                executorService.awaitTermination(1,TimeUnit.NANOSECONDS);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+//        }
     }
 
     public static void main(String[] passedArgs) {
